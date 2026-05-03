@@ -15,6 +15,24 @@ hypothesis -> evidence -> critique -> rebuttal -> reconstruction -> next questio
 
 ## Quick Start
 
+### Browser UI
+
+```bash
+python3 web_app.py
+```
+
+It opens the browser automatically. If it does not, open:
+
+```text
+http://127.0.0.1:8765
+```
+
+The browser UI lets you create/reset a topic, copy the next prompt, paste external AI answers, inspect shared memory, and run local Ollama agents.
+
+On macOS, you can also double-click `launch.command`.
+
+### CLI
+
 ```bash
 python3 all_ai.py init "AI teams for deep research"
 python3 all_ai.py prompt

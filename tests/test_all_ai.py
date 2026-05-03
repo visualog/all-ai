@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 import all_ai
+import web_app
 
 
 class WorkbenchTests(unittest.TestCase):
@@ -77,6 +78,20 @@ class WorkbenchTests(unittest.TestCase):
             all_ai.init_topic(type("Args", (), {"file": str(path), "topic": "custom export", "force": False}))
             all_ai.export_summary(type("Args", (), {"file": str(path), "output": None}))
             self.assertTrue((path.parent / "custom-export-export.md").exists())
+
+    def test_web_page_renders_without_topic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            page = web_app.render_page(Path(tmp) / "missing.md")
+            self.assertIn("Research<br>Workbench", page)
+            self.assertIn("No topic yet", page)
+
+    def test_web_page_renders_prompt_after_topic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "topic.md"
+            all_ai.init_topic(type("Args", (), {"file": str(path), "topic": "web topic", "force": False}))
+            page = web_app.render_page(path)
+            self.assertIn("web topic", page)
+            self.assertIn("Current topic:", page)
 
 
 if __name__ == "__main__":
