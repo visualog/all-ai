@@ -18,6 +18,7 @@ hypothesis -> evidence -> critique -> rebuttal -> reconstruction -> next questio
 ```bash
 python3 all_ai.py init "AI teams for deep research"
 python3 all_ai.py prompt
+python3 all_ai.py prompt --output next-prompt.md
 python3 all_ai.py add --agent "External ChatGPT" --file answer.txt
 python3 all_ai.py prompt --agent skeptic
 python3 all_ai.py status
@@ -32,7 +33,7 @@ Install and run Ollama separately, then pull a model such as `qwen2.5:7b` or ano
 ```bash
 ollama serve
 ollama pull qwen2.5:7b
-python3 all_ai.py run-local --model qwen2.5:7b --rounds 2
+python3 all_ai.py run-local --model qwen2.5:7b --rounds 2 --timeout 120 --max-tokens 800
 ```
 
 This talks only to `http://localhost:11434` by default.
@@ -43,7 +44,8 @@ This talks only to `http://localhost:11434` by default.
 python3 all_ai.py init "topic"
 python3 all_ai.py prompt --agent explorer
 python3 all_ai.py add --agent "Gemini manual" --file response.md
-python3 all_ai.py run-local --model qwen2.5:7b --rounds 1
+python3 all_ai.py add --agent "Quick note" --response "A short manually added response."
+python3 all_ai.py run-local --model qwen2.5:7b --rounds 1 --max-tokens 800
 python3 all_ai.py export
 python3 all_ai.py status
 ```
@@ -60,4 +62,3 @@ python3 all_ai.py status
 ## Safety Boundary
 
 Do not use this tool to scrape, control, or extract outputs from commercial web chat UIs. If you use ChatGPT, Gemini, Perplexity, or similar web products, keep that interaction manual: you submit prompts and copy responses yourself.
-

@@ -60,9 +60,19 @@ Shared goal:
 Develop the topic through hypothesis, evidence, critique, rebuttal, reconstruction,
 and further investigation. Do not merely answer once. Improve the team's thinking.
 
+Current topic:
+{topic}
+
 Your role:
 {role_name}
 {role_description}
+
+Research integrity rules:
+- Preserve the current topic. Do not replace it with an unrelated example topic.
+- Distinguish verified evidence, plausible inference, and evidence still needed.
+- Do not invent sources. If research is needed, propose concrete queries and source criteria.
+- Critique ideas and assumptions, not people.
+- Keep the loop moving by handing off precise questions.
 
 Current shared memory:
 {memory}
@@ -141,15 +151,23 @@ def next_agent(state: TopicState, requested: str | None) -> str:
 
 
 def compact_memory(content: str, limit: int = 14000) -> str:
+    if limit < 1000:
+        raise ValueError("limit must be at least 1000 characters")
     if len(content) <= limit:
         return content
-    head = content[:2500]
-    tail = content[-(limit - len(head) - 120) :]
-    return f"{head}\n\n[...older middle content omitted for prompt size...]\n\n{tail}"
+    head_size = min(2500, limit // 2)
+    marker = "\n\n[...older middle content omitted for prompt size...]\n\n"
+    tail_size = limit - head_size - len(marker)
+    if tail_size <= 0:
+        raise ValueError("limit is too small for compacted memory")
+    head = content[:head_size]
+    tail = content[-tail_size:]
+    return f"{head}{marker}{tail}"
 
 
 def build_prompt(state: TopicState, agent: str) -> str:
     return PROMPT_TEMPLATE.format(
+        topic=state.topic,
         role_name=agent,
         role_description=AGENTS[agent],
         memory=compact_memory(state.content),
@@ -202,14 +220,23 @@ To be developed.
 def print_prompt(args: argparse.Namespace) -> None:
     state = load_state(Path(args.file))
     agent = next_agent(state, args.agent)
-    print(build_prompt(state, agent))
+    prompt = build_prompt(state, agent)
+    if args.output:
+        write_text(Path(args.output), prompt)
+        print(f"Wrote {agent} prompt to {args.output}")
+    else:
+        print(prompt)
 
 
 def add_turn(args: argparse.Namespace) -> None:
     path = Path(args.file)
     state = load_state(path)
-    response_path = Path(args.response_file) if args.response_file else None
-    if response_path:
+    direct_response = getattr(args, "response", None)
+    response_file = getattr(args, "response_file", None)
+    response_path = Path(response_file) if response_file else None
+    if direct_response:
+        response = direct_response.strip()
+    elif response_path:
         response = read_text(response_path).strip()
     else:
         response = sys.stdin.read().strip()
@@ -218,6 +245,8 @@ def add_turn(args: argparse.Namespace) -> None:
 
     turn_number = len(state.turns) + 1
     agent_name = args.agent.strip()
+    if not agent_name:
+        raise SystemExit("Agent name cannot be empty.")
     entry = f"""## Turn {turn_number} - {agent_name}
 
 Recorded: {now_stamp()}
@@ -230,34 +259,65 @@ Recorded: {now_stamp()}
     print(f"Added turn {turn_number} from {agent_name} to {path}")
 
 
-def call_ollama(prompt: str, model: str, url: str, temperature: float) -> str:
+def call_ollama(
+    prompt: str,
+    model: str,
+    url: str,
+    temperature: float,
+    timeout: int,
+    max_tokens: int | None,
+) -> str:
+    options = {"temperature": temperature}
+    if max_tokens:
+        options["num_predict"] = max_tokens
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": temperature},
+        "options": options,
     }
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw_body = response.read().decode("utf-8")
+            body = json.loads(raw_body)
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Ollama returned HTTP {exc.code}: {details}") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(
             "Could not reach Ollama. Start it with `ollama serve`, pull a model, "
             f"then retry. Details: {exc}"
         ) from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Ollama returned invalid JSON: {exc}") from exc
     return str(body.get("response", "")).strip()
 
 
 def run_local(args: argparse.Namespace) -> None:
+    if args.rounds < 1:
+        raise SystemExit("--rounds must be at least 1.")
+    if not 0 <= args.temperature <= 2:
+        raise SystemExit("--temperature must be between 0 and 2.")
+    if args.timeout < 1:
+        raise SystemExit("--timeout must be at least 1 second.")
+    if args.max_tokens is not None and args.max_tokens < 1:
+        raise SystemExit("--max-tokens must be at least 1.")
     path = Path(args.file)
     for _ in range(args.rounds):
         state = load_state(path)
         agent = next_agent(state, None)
-        print(f"Running {agent} with {args.model}...")
+        print(f"Running {agent} with {args.model}...", flush=True)
         prompt = build_prompt(state, agent)
-        response = call_ollama(prompt, args.model, args.ollama_url, args.temperature)
+        response = call_ollama(
+            prompt,
+            args.model,
+            args.ollama_url,
+            args.temperature,
+            args.timeout,
+            args.max_tokens,
+        )
         if not response:
             raise SystemExit("Ollama returned an empty response.")
         append_generated_turn(path, state, agent, args.model, response)
@@ -279,7 +339,7 @@ Recorded: {now_stamp()}
 
 def export_summary(args: argparse.Namespace) -> None:
     state = load_state(Path(args.file))
-    out = Path(args.output) if args.output else DEFAULT_WORKSPACE / f"{slugify(state.topic)}-export.md"
+    out = Path(args.output) if args.output else state.path.parent / f"{slugify(state.topic)}-export.md"
     prompt = textwrap.dedent(
         f"""\
         Use the conversation in `{state.path}` to create a final synthesis with:
@@ -323,11 +383,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     prompt = sub.add_parser("prompt", help="Print the next manual prompt")
     prompt.add_argument("--agent", choices=AGENT_ORDER)
+    prompt.add_argument("--output", "-o", help="Write the prompt to a file instead of stdout")
     prompt.set_defaults(func=print_prompt)
 
     add = sub.add_parser("add", help="Add a manual response as a new turn")
     add.add_argument("--agent", required=True)
-    add.add_argument("--response-file", "--file-in", dest="response_file")
+    add.add_argument("--response-file", "--file", "--file-in", dest="response_file")
+    add.add_argument("--response", help="Add response text directly")
     add.set_defaults(func=add_turn)
 
     run = sub.add_parser("run-local", help="Run one or more local Ollama turns")
@@ -335,6 +397,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--rounds", type=int, default=1)
     run.add_argument("--ollama-url", default=os.environ.get("OLLAMA_URL", DEFAULT_OLLAMA_URL))
     run.add_argument("--temperature", type=float, default=0.7)
+    run.add_argument("--timeout", type=int, default=180, help="Ollama request timeout in seconds")
+    run.add_argument("--max-tokens", type=int, help="Maximum generated tokens for each local turn")
     run.set_defaults(func=run_local)
 
     export = sub.add_parser("export", help="Write a final synthesis prompt")
